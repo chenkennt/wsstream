@@ -1,0 +1,66 @@
+<html>
+
+<head>
+  <style>
+    #video {
+      transform: rotateY(180deg);
+      -webkit-transform: rotateY(180deg);
+      -moz-transform: rotateY(180deg);
+    }
+  </style>
+</head>
+
+<body>
+  <video id="video" width="640" height="480" autoplay></video>
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@aspnet/signalr@1.1.0/dist/browser/signalr.min.js"></script>
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/msgpack5@5.1.0/dist/msgpack5.min.js"></script>
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@aspnet/signalr-protocol-msgpack@1.1.0/dist/browser/signalr-protocol-msgpack.js"></script>
+  <script src="ts-ebml.min.js"></script>
+  <script>
+    const { Decoder } = require('ts-ebml');
+    (async function () {
+      let connection = new signalR.HubConnectionBuilder().withUrl('/stream').withHubProtocol(new signalR.protocols.msgpack.MessagePackHubProtocol()).build();
+      await connection.start();
+
+      let index = 0, init = false, clusterId = 0, segmentId = 0;
+      function emitSegment(data) {
+        if (data.byteLength === 0) return;
+        if (!init) { // todo: init may contain multiple fragments
+          connection.send('init', new Uint8Array(data));
+          init = true;
+        } else {
+          connection.send('stream', clusterId, segmentId, new Uint8Array(data));
+          segmentId++;
+        }
+      }
+
+      let stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      let recorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=opus,vp8' });
+      let decoder = new Decoder();
+      recorder.ondataavailable = async event => {
+        let i = segmentId;
+        let data = await event.data.arrayBuffer();
+        if (i !== segmentId) throw 'unexpected segmentId, data may be in random order!'; // ensure await arrayBuffer() won't break the order of the data
+        let elems = decoder.decode(data);
+        let last = index;
+        elems.forEach(e => {
+          if (e.name === 'Cluster') {
+            emitSegment(data.slice(last - index, e.tagStart - index));
+            clusterId++;
+            segmentId = 0;
+            last = e.tagStart;
+          }
+        });
+        emitSegment(data.slice(last - index));
+        index += data.byteLength;
+      };
+      setInterval(() => recorder.requestData(), 200);
+      recorder.start();
+
+      let v = document.querySelector('#video');
+      v.srcObject = stream;
+    })();
+  </script>
+</body>
+
+</html>

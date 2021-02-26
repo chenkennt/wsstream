@@ -1,0 +1,102 @@
+<html>
+
+<head>
+  <style>
+    #video {
+      transform: rotateY(180deg);
+      -webkit-transform: rotateY(180deg);
+      -moz-transform: rotateY(180deg);
+    }
+  </style>
+</head>
+
+<body>
+  <button id="new">New</button>
+  <script src="ts-ebml.min.js"></script>
+  <script>
+    let init;
+    let buffers = [];
+    const { Decoder } = require('ts-ebml');
+    (async function () {
+      let decoder = new Decoder();
+
+      let index = 0, clusterIndex = 0;
+      let stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      let recorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=opus,vp8' });
+      function appendBuffer(data) {
+        buffers.forEach((b) => {
+          if (b.n && clusterIndex !== 0) return;
+          if (b.n) b.b.appendBuffer(init);
+          b.n = false;
+          if (b.b.updating === false && b.q.length === 0) {
+            try {
+              b.b.appendBuffer(data);
+            } catch (ex) {
+              console.log(ex);
+            }
+          } else b.q.push(data);
+        });
+      }
+
+      function emitFragment(data) {
+        if (data.byteLength === 0) return;
+        if (!init) init = data; // todo: init may contain multiple fragments
+        else {
+          appendBuffer(data);
+          clusterIndex++;
+        }
+      }
+
+      recorder.ondataavailable = async event => {
+        let data = await event.data.arrayBuffer();
+        let elems = decoder.decode(data);
+        let last = index;
+        elems.forEach(e => {
+          if (e.name === 'Cluster') {
+            emitFragment(data.slice(last - index, e.tagStart - index));
+            clusterIndex = 0;
+            last = e.tagStart;
+          }
+        });
+        emitFragment(data.slice(last - index));
+        index += data.byteLength;
+      };
+      setInterval(() => recorder.requestData(), 200);
+      recorder.start();
+
+      function createMediaSource() {
+        let mediaSource = new MediaSource();
+        let sourceBuffer;
+        mediaSource.onsourceopen = e => {
+          sourceBuffer = mediaSource.addSourceBuffer('video/webm; codecs=opus,vp8');
+          let b = {
+            s: mediaSource,
+            b: sourceBuffer,
+            q: [],
+            n: true
+          };
+          sourceBuffer.onupdateend = () => {
+            if (b.q.length > 0) {
+              sourceBuffer.appendBuffer(b.q[0]);
+              b.q = b.q.slice(1);
+            }
+          };
+          sourceBuffer.mode = 'sequence';
+          buffers.push(b);
+        }
+        return mediaSource;
+      }
+
+      document.querySelector('#new').addEventListener('click', () => {
+        let v = document.createElement('video');
+        v.width = 640;
+        v.height = 480;
+        v.autoplay = true;
+        v.src = URL.createObjectURL(createMediaSource());
+        document.body.appendChild(v);
+      });
+    })();
+  </script>
+</body>
+
+</html>

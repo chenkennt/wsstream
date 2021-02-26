@@ -1,0 +1,59 @@
+<html>
+
+<head>
+</head>
+
+<body>
+  <video id="video" width="640" height="480" autoplay></video>
+  <script type="text/javascript"
+    src="https://cdn.jsdelivr.net/npm/@aspnet/signalr@1.1.0/dist/browser/signalr.min.js"></script>
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/msgpack5@5.1.0/dist/msgpack5.min.js"></script>
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@aspnet/signalr-protocol-msgpack@1.1.0/dist/browser/signalr-protocol-msgpack.js"></script>
+  <script>
+    (function () {
+      // initialize media source
+      let mediaSource = new MediaSource();
+      let sourceBuffer;
+      let init;
+      let canPlay = false;
+      let queue = [];
+      mediaSource.onsourceopen = e => {
+        sourceBuffer = mediaSource.addSourceBuffer('video/webm; codecs=opus,vp8');
+        sourceBuffer.onupdateend = () => {
+          if (queue.length > 0) {
+            sourceBuffer.appendBuffer(queue[0]);
+            queue = queue.slice(1);
+          }
+        };
+        sourceBuffer.mode = 'sequence';
+        initializeConnection();
+      }
+
+      let v = document.querySelector('#video');
+      v.src = URL.createObjectURL(mediaSource);
+
+      function toArrayBuffer(data) {
+        return data.buffer.slice(data.byteOffset, data.byteLength + data.byteOffset);
+      }
+
+      async function initializeConnection() {
+        let connection = new signalR.HubConnectionBuilder().withUrl('/stream').withHubProtocol(new signalR.protocols.msgpack.MessagePackHubProtocol()).build();
+        connection.on('init', d => init = toArrayBuffer(d));
+        connection.on('stream', (cid, sid, d) => {
+          console.log(`${cid} ${sid}`);
+          if (!canPlay && init && sid === 0) {
+            sourceBuffer.appendBuffer(init);
+            canPlay = true;
+          }
+
+          if (!canPlay) return;
+          d = toArrayBuffer(d);
+          if (sourceBuffer.updating === false && queue.length === 0) sourceBuffer.appendBuffer(d);
+          else queue.push(d);
+        });
+        await connection.start();
+        init = toArrayBuffer(await connection.invoke('getInit'));
+      }
+    })();
+  </script>
+</body>
