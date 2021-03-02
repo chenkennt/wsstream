@@ -26,10 +26,6 @@
       let v = document.querySelector('#video');
       v.src = URL.createObjectURL(mediaSource);
 
-      function toArrayBuffer(data) {
-        return data.buffer.slice(data.byteOffset, data.byteLength + data.byteOffset);
-      }
-
       async function initializeConnection() {
         let url = `ws${location.protocol.slice(4)}//${location.host}/recv`;
         let connection = new WebSocket(url);
